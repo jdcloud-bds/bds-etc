@@ -78,6 +78,19 @@ type storedReceiptRLPWithStatus struct {
 	Status            ReceiptStatus
 }
 
+type oldReceipt struct {
+	// Consensus fields
+	PostState         []byte
+	CumulativeGasUsed *big.Int
+	Bloom             Bloom
+	Logs              vm.Logs
+
+	// Implementation fields
+	TxHash          common.Hash
+	ContractAddress common.Address
+	GasUsed         *big.Int
+}
+
 // NewReceipt creates a barebone transaction receipt, copying the init fields.
 func NewReceipt(root []byte, cumulativeGasUsed *big.Int) *Receipt {
 	return &Receipt{PostState: common.CopyBytes(root), CumulativeGasUsed: new(big.Int).Set(cumulativeGasUsed), Status: TxStatusUnknown}
@@ -97,6 +110,7 @@ func (r *Receipt) DecodeRLP(s *rlp.Stream) error {
 		CumulativeGasUsed *big.Int
 		Bloom             Bloom
 		Logs              vm.Logs
+		vm.LogForStorage
 	}
 	if err := s.Decode(&receipt); err != nil {
 		return err
@@ -151,6 +165,7 @@ func (r *Receipt) String() string {
 // ReceiptForStorage is a wrapper around a Receipt that flattens and parses the
 // entire content of a receipt, as opposed to only the consensus fields originally.
 type ReceiptForStorage Receipt
+type OldReceiptForStorage oldReceipt
 
 // EncodeRLP implements rlp.Encoder, and flattens all content fields of a receipt
 // into an RLP stream.

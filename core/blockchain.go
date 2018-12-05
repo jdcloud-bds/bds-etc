@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	mrand "math/rand"
 	"runtime"
@@ -35,24 +34,34 @@ import (
 	"encoding/binary"
 
 	"github.com/eth-classic/go-ethereum/common"
+	"github.com/eth-classic/go-ethereum/common/hexutil"
 	"github.com/eth-classic/go-ethereum/core/state"
 	"github.com/eth-classic/go-ethereum/core/types"
 	"github.com/eth-classic/go-ethereum/core/vm"
 	"github.com/eth-classic/go-ethereum/crypto"
 	"github.com/eth-classic/go-ethereum/ethdb"
 	"github.com/eth-classic/go-ethereum/event"
+	"github.com/eth-classic/go-ethereum/httputils"
 	"github.com/eth-classic/go-ethereum/logger"
 	"github.com/eth-classic/go-ethereum/logger/glog"
 	"github.com/eth-classic/go-ethereum/pow"
 	"github.com/eth-classic/go-ethereum/rlp"
+	"github.com/eth-classic/go-ethereum/rpc"
 	"github.com/eth-classic/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
+	"log"
+	"strings"
+	"unsafe"
+	"encoding/json"
 )
 
 var (
 	ErrNoGenesis = errors.New("Genesis not found in chain")
 	errNilBlock  = errors.New("nil block")
 	errNilHeader = errors.New("nil header")
+
+	BaseBlockRewards [2]big.Int
+	UncleRewards     [2][2]big.Int
 )
 
 const (
@@ -65,6 +74,18 @@ const (
 	// must be bumped when consensus algorithm is changed, this forces the upgradedb
 	// command to be run (forces the blocks to be imported again using the new algorithm)
 	BlockChainVersion = 3
+
+	GenesisBlockTimestamp        = 1438226773
+
+	DefaultGasPrice = 1e9
+
+	TransferParamFormatFrom               = "{\"to\":\"0x%s\", \"data\":\"0x70a08231000000000000000000000000%s\"}"
+	TransferParamFormatTo                 = "{\"to\":\"0x%s\", \"data\":\"0x70a08231000000000000000000000000%s\"}"
+	TransferParamFormatTokenName          = "{\"to\":\"0x%s\", \"data\":\"0x06fdde03\"}"
+	TransferParamFormatTokenSymbol        = "{\"to\":\"0x%s\", \"data\":\"0x95d89b41\"}"
+	TransferParamFormatTokenDecimalLength = "{\"to\":\"0x%s\", \"data\":\"0x313ce567\"}"
+	TransferParamFormatTokenTotalSupply   = "{\"to\":\"0x%s\", \"data\":\"0x18160ddd\"}"
+	TransferParamFormatTokenOwner         = "{\"to\":\"0x%s\", \"data\":\"0x8da5cb5b\"}"
 )
 
 // BlockChain represents the canonical chain given a database with a genesis
@@ -1676,7 +1697,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (res *ChainInsertResult) {
 			res.Error = err
 			return
 		}
-
+		err = bc.NewWriteDataToKafka(block, receipts)
 		switch status {
 		case CanonStatTy:
 			if glog.V(logger.Debug) {
@@ -1770,6 +1791,562 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (res *ChainInsertResult) {
 
 	return r
 }
+func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receipt) error {
+	BaseBlockRewards[0].SetUint64(5000000000000000000) //  5 * 10^18
+	BaseBlockRewards[1].SetUint64(3000000000000000000) // 3 * 10^18
+	UncleRewards[0][0].SetUint64(156250000000000000)   //  5* (1/32)* 10^18 = 0.15625 * 10^18
+	UncleRewards[0][1].SetUint64(312500000000000000)   //  5* (1/32)*2 10^18  = 0.3125 * 10^18
+	UncleRewards[1][0].SetUint64(93750000000000000)    // 3* (1/32) * 10^18 = 0.09375 * 10^18
+	UncleRewards[1][1].SetUint64(187500000000000000)   // 3* (1/32)*2 * 10^18 = 0.1875 * 10^18
+
+	statedb, _ := bc.State()
+
+	bk := new(httputils.BlockKafka)
+	bk.TokenTransactions = make([]*httputils.TokenTransaction, 0)
+	bk.Tokens = make([]*httputils.Token, 0)
+	bk.Transactions = make([]*httputils.Transaction, 0)
+	bk.ENSes = make([]*httputils.ENS, 0)
+	bk.InternalTransactions = make([]*httputils.InternalTransaction, 0)
+
+	//block info
+	height := blk.Number().Int64()
+	log.Println("Current Block", "Height", height)
+	totalFee := new(big.Int)
+	singleFee := new(big.Int)
+
+	bk.Block = new(httputils.Block)
+
+	bk.Block.Height = height
+	bk.Block.Timestamp = blk.Time().Int64()
+
+	bk.Block.ParentHash = blk.Header().ParentHash.String()
+	bk.Block.SHA3Uncles = blk.Header().UncleHash.String()
+	bk.Block.Miner = blk.Coinbase().String()
+	bk.Block.Difficulty = blk.Difficulty().Int64()
+
+	bk.Block.ExtraData = hexutil.Encode(blk.Header().Extra)
+	bk.Block.LogsBloom = blk.Bloom()
+
+	bk.Block.TransactionRoot = blk.Header().TxHash.String()
+	bk.Block.StateRoot = blk.Root().String()
+	bk.Block.ReceiptsRoot = blk.Header().ReceiptHash.String()
+	bk.Block.GasUsed = blk.GasUsed().Int64()
+	bk.Block.GasLimit = blk.Header().GasLimit.Int64()
+	bk.Block.Nonce = hexutil.EncodeUint64(blk.Nonce())
+	bk.Block.MixHash = blk.MixDigest().String()
+	bk.Block.Hash = blk.Hash().String()
+	//bk.Block.TotalDifficulty = blk.Difficulty().Add(rawdb.ReadTd(bc.db, blk.ParentHash(), blk.NumberU64()-1), blk.Difficulty()).String() //rawdb.ReadTd(bc.db, blk.ParentHash(), blk.NumberU64()-1).String())
+	bk.Block.TotalDifficulty = blk.Difficulty().Add(bc.GetTd(blk.ParentHash()), blk.Difficulty()).String()
+	bk.Block.Size = int64(blk.Size())
+
+	bk.Block.MinerBalance = statedb.GetBalance(blk.Coinbase())
+	//Uncles in the block
+	uncles := make([]*httputils.Uncle, 0)
+	if len(blk.Uncles()) > 0 {
+		for _, unc := range blk.Uncles() {
+			uncle := new(httputils.Uncle)
+			uncle.Height = unc.Number.Int64()
+			uncle.Timestamp = unc.Time.Int64()
+			uncle.ParentHash = unc.ParentHash.String()
+			uncle.SHA3Uncles = unc.UncleHash.String()
+			uncle.Miner = unc.Coinbase.String()
+			uncle.MinerBalance = statedb.GetBalance(unc.Coinbase)
+			uncle.Difficulty = unc.Difficulty.Int64()
+			uncle.ExtraData = hexutil.Encode(unc.Extra)
+			uncle.LogsBloom = unc.Bloom
+			uncle.TransactionRoot = unc.TxHash.String()
+			uncle.StateRoot = unc.Root.String()
+			uncle.ReceiptsRoot = unc.ReceiptHash.String()
+			uncle.GasUsed = unc.GasUsed.Int64()
+			uncle.GasLimit = unc.GasLimit.Int64()
+			uncle.Nonce = hexutil.EncodeUint64(unc.Nonce.Uint64())
+			uncle.MixHash = unc.MixDigest.String()
+			uncle.Hash = unc.Hash().String()
+			//uncle.TotalDifficulty = unc.Difficulty.Add(rawdb.ReadTd(bc.db, unc.ParentHash, unc.Number.Uint64()-1), unc.Difficulty).String()
+			uncle.TotalDifficulty = unc.Difficulty.Add(bc.GetTd(unc.ParentHash), unc.Difficulty).String()
+			uncle.Size = int64(unc.Size())
+			uncle.BlockHeight = height
+			//reward
+			if uncle.BlockHeight < 4370000 {
+				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 5 / 8 * 10^18
+				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 625000000000000000
+			} else {
+				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 3 / 8* 10^18
+				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 375000000000000000
+			}
+			uncles = append(uncles, uncle)
+		}
+	}
+	bk.Uncles = uncles
+	//Transactions info
+	if blk.Transactions().Len() > 0 {
+		tokenTransactions := make([]*httputils.TokenTransaction, 0)
+		tokens := make([]*httputils.Token, 0)
+		for i, tx := range blk.Transactions() {
+			tran := new(httputils.Transaction)
+			tran.Hash = tx.Hash().String()
+			tran.BlockHeight = height
+
+			_from, err := tx.From()
+			if err != nil {
+				fmt.Println("Error when get tx's From attribute.")
+			}
+			tran.From = _from.String()
+			tran.FromBalance = statedb.GetBalance(_from)
+			tran.Timestamp = blk.Time().Int64()
+			tran.TxBlockIndex = i
+			if tx.To() != nil {
+				tran.To = tx.To().String()
+				tran.ToBalance = statedb.GetBalance(*tx.To())
+				tran.Type = 2 //general tx
+				//tx.Type=1 for contract transaction
+
+			} else { // contract create tx
+				tran.Type = 0 //tx for create contract
+				tran.To = ""
+				tran.ContractAddress = rcps[i].ContractAddress.String()
+				tran.ToBalance = statedb.GetBalance(rcps[i].ContractAddress)
+			}
+			tran.Value = tx.Value()
+			tran.Gas = tx.Gas().Uint64()
+			tran.GasPrice = tx.GasPrice().Uint64()
+			tran.Nonce = tx.Nonce()
+			V, R, S := tx.RawSignatureValues()
+			tran.V = hexutil.EncodeBig(V)
+			tran.R = hexutil.EncodeBig(R)
+			tran.S = hexutil.EncodeBig(S)
+			//log.Println(">>>>>>tran.V",tran.V)
+			tran.Status = uint64(rcps[i].Status)
+			tran.CumulativeGasUsed = rcps[i].CumulativeGasUsed.Int64()
+			tran.GasUsed = rcps[i].GasUsed.Int64()
+			tran.LogsBloom = hexutil.EncodeBig(rcps[i].Bloom.Big())
+			tran.Root = hexutil.Encode(rcps[i].PostState)
+			tran.LogLen = len(rcps[i].Logs)
+			tran.TxSize = int(tx.Size())
+			tran.ChainId = tx.ChainId().Int64()
+			tran.ReplayProtected = tx.Protected()
+			bk.Transactions = append(bk.Transactions, tran)
+
+			singleFee.SetInt64(rcps[0].GasUsed.Int64() * blk.Transactions()[0].GasPrice().Int64())
+			totalFee.Add(totalFee, singleFee)
+
+			logsList := rcps[i].Logs
+			//Token Transactions info
+			if len(logsList) > 0 {
+				for _, logItem := range logsList {
+					topics := logItem.Topics
+					tokenTransaction := new(httputils.TokenTransaction)
+					if len(topics) > 2 {
+						if topics[0].String() == "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" {
+							tokenTransaction.BlockHeight = height
+							tokenTransaction.From = topics[1].String()[26:]
+							if len(tokenTransaction.From) > 40 {
+								tokenTransaction.From = tokenTransaction.From[len(tokenTransaction.From)-40:]
+							}
+							tokenTransaction.To = topics[2].String()[26:]
+							if len(tokenTransaction.To) > 40 {
+								tokenTransaction.To = tokenTransaction.To[len(tokenTransaction.To)-40:]
+							}
+							tokenTransaction.LogIndex = int64(logItem.Index)
+							tokenTransaction.ParentTxHash = logItem.TxHash.String()
+							tokenTransaction.ParentTxIndex = int64(logItem.TxIndex)
+							tokenTransaction.Timestamp = blk.Time().Int64()
+							tokenTransaction.TokenAddress = logItem.Address.String()[2:]
+							tokenTransaction.Value = new(big.Int).SetBytes(logItem.Data)
+
+							fromParamStr := fmt.Sprintf(TransferParamFormatFrom, tokenTransaction.TokenAddress, tokenTransaction.From)
+							toParamStr := fmt.Sprintf(TransferParamFormatTo, tokenTransaction.TokenAddress, tokenTransaction.To)
+
+							fromArgs := new(CallArgs)
+							err = json.Unmarshal([]byte(fromParamStr), fromArgs)
+							if err != nil {
+								fmt.Println("Parse token transaction from_balance failed", "number", height, "transaction", tran.Hash, "msg", err)
+								continue
+							}
+							res, _, _, err := bc.doCall(*fromArgs, bk.Block.Height)
+							if err != nil {
+								fmt.Println("Call token transaction from_balance failed", "number", height, "transaction", tran.Hash, "msg", err)
+								continue
+							}
+							tokenTransaction.FromBalance = big.NewInt(0)
+							tokenTransaction.FromBalance.SetBytes(res)
+							if tokenTransaction.FromBalance.Cmp(big.NewInt(0)) <= 0 {
+								tokenTransaction.FromBalance.SetInt64(0)
+							}
+
+							toArgs := new(CallArgs)
+							err = json.Unmarshal([]byte(toParamStr), toArgs)
+							if err != nil {
+								fmt.Println("Parse token transaction to_balance failed", "number", height, "transaction", tran.Hash, "msg", err)
+								continue
+							}
+							res, _, _, err = bc.doCall(*toArgs, bk.Block.Height)
+							if err != nil {
+								fmt.Println("Call token transaction to_balance failed", "number", height, "transaction", tran.Hash, "msg", err)
+								continue
+							}
+							tokenTransaction.ToBalance = big.NewInt(0)
+							tokenTransaction.ToBalance.SetBytes(res)
+							if tokenTransaction.ToBalance.Cmp(big.NewInt(0)) <= 0 {
+								tokenTransaction.ToBalance.SetInt64(0)
+							}
+
+							tokenTransactions = append(tokenTransactions, tokenTransaction)
+
+							//for token info
+							tokenInfo, err := bc.GetTokenInfo(bk.Block.Height, tokenTransaction.TokenAddress)
+							if err != nil {
+								continue
+							}
+							tokens = append(tokens, tokenInfo)
+
+						}
+					}
+				}
+
+			}
+
+		}
+		bk.TokenTransactions = tokenTransactions
+		bk.Tokens = tokens
+	}
+	var reward *big.Int
+	var BlockUncleReward uint64
+	if height < 4370000 {
+		reward = new(big.Int).Add(&BaseBlockRewards[0], totalFee)
+		if len(blk.Uncles()) > 0 {
+			reward = new(big.Int).Add(reward, &UncleRewards[0][len(blk.Uncles())-1])
+			BlockUncleReward = UncleRewards[0][len(blk.Uncles())-1].Uint64()
+		}
+	} else {
+		reward = new(big.Int).Add(&BaseBlockRewards[1], totalFee)
+		if len(blk.Uncles()) > 0 {
+			reward = new(big.Int).Add(reward, &UncleRewards[1][len(blk.Uncles())-1])
+			BlockUncleReward = UncleRewards[1][len(blk.Uncles())-1].Uint64()
+		}
+	}
+	bk.Block.BlockReward = reward.Int64()
+	bk.Block.BlockUncleReward = int64(BlockUncleReward)
+
+	if KafkaEndpoint != "" {
+		if bk.Block.Height == 1 {
+			block := bc.setupGenesisBlock()
+			if block != nil {
+				err := bc.sendDataToKafka(block)
+				if err != nil {
+					log.Println("send data to kafka failed.", "err", err)
+					return err
+				}
+			}
+		}
+
+		err := bc.sendDataToKafka(bk)
+		if err != nil {
+			log.Println("send data to kafka failed.", "err", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (bc *BlockChain) setupGenesisBlock() *httputils.BlockKafka {
+	genesis := bc.GetBlockByNumber(0)
+	if genesis == nil {
+		log.Println("genesis is nil")
+		return nil
+	}
+
+	b := new(httputils.BlockKafka)
+	height := genesis.Number().Int64()
+	b.Block = new(httputils.Block)
+	b.Block.Height = height
+	b.Block.Timestamp = GenesisBlockTimestamp
+	b.Block.ParentHash = genesis.Header().ParentHash.String()
+	b.Block.SHA3Uncles = genesis.Header().UncleHash.String()
+	b.Block.Miner = genesis.Coinbase().String()
+	b.Block.Difficulty = genesis.Difficulty().Int64()
+	b.Block.ExtraData = hexutil.Encode(genesis.Header().Extra)
+	b.Block.LogsBloom = genesis.Bloom()
+	b.Block.TransactionRoot = genesis.Header().TxHash.String()
+	b.Block.StateRoot = genesis.Root().String()
+	b.Block.ReceiptsRoot = genesis.Header().ReceiptHash.String()
+	b.Block.GasUsed = genesis.GasUsed().Int64()
+	b.Block.GasLimit = genesis.Header().GasLimit.Int64()
+	b.Block.Nonce = hexutil.EncodeUint64(genesis.Nonce())
+	b.Block.MixHash = genesis.MixDigest().String()
+	b.Block.Hash = genesis.Hash().String()
+	b.Block.TotalDifficulty = genesis.Difficulty().String()
+	b.Block.Size = int64(genesis.Size())
+	return b
+}
+// CallArgs represents the arguments for a call.
+type CallArgs struct {
+	From     common.Address  `json:"from"`
+	To       *common.Address `json:"to"`
+	Gas      *rpc.HexNumber  `json:"gas"`
+	GasPrice *rpc.HexNumber  `json:"gasPrice"`
+	Value    rpc.HexNumber   `json:"value"`
+	Data     string          `json:"data"`
+}
+
+// callmsg is the message type used for call transactions.
+type callmsg struct {
+	from          *state.StateObject
+	to            *common.Address
+	gas, gasPrice *big.Int
+	value         *big.Int
+	data          []byte
+}
+
+// accessor boilerplate to implement core.Message
+func (m callmsg) From() (common.Address, error)         { return m.from.Address(), nil }
+func (m callmsg) FromFrontier() (common.Address, error) { return m.from.Address(), nil }
+func (m callmsg) Nonce() uint64                         { return m.from.Nonce() }
+func (m callmsg) To() *common.Address                   { return m.to }
+func (m callmsg) GasPrice() *big.Int                    { return m.gasPrice }
+func (m callmsg) Gas() *big.Int                         { return m.gas }
+func (m callmsg) Value() *big.Int                       { return m.value }
+func (m callmsg) Data() []byte                          { return m.data }
+
+func (bc *BlockChain) doCall(args CallArgs, blockNr int64) ([]byte, *big.Int, bool, error) {
+	// Fetch the state associated with the block number
+	//stateDb, block, err := stateAndBlockByNumber(s.miner, s.bc, blockNr, s.chainDb)
+	//if stateDb == nil || err != nil {
+	//	return "0x", nil, err
+	//}
+	//stateDb = stateDb.Copy()
+
+	stateDb, err := bc.State()
+	if stateDb == nil || err != nil {
+		return nil, nil, false, err
+	}
+	block := bc.GetBlockByNumber(uint64(blockNr))
+
+	// Retrieve the account state object to interact with
+	var from *state.StateObject
+	//if args.From == (common.Address{}) {
+	//	accounts := bc. s.am.Accounts()
+	//	if len(accounts) == 0 {
+	//		from = stateDb.GetOrNewStateObject(common.Address{})
+	//	} else {
+	//		from = stateDb.GetOrNewStateObject(accounts[0].Address)
+	//	}
+	//} else {
+	//	from = stateDb.GetOrNewStateObject(args.From)
+	//}
+	from = stateDb.GetOrNewStateObject(common.Address{})
+	from.SetBalance(common.MaxBig)
+
+	// Assemble the CALL invocation
+	msg := callmsg{
+		from: from,
+		to:   args.To,
+		gas:  args.Gas.BigInt(),
+		//gas:      big.NewInt(int64(args.Gas)),
+		gasPrice: args.GasPrice.BigInt(),
+		//gasPrice: args.GasPrice.ToInt(),
+		value: args.Value.BigInt(),
+		data:  common.FromHex(args.Data),
+	}
+	if msg.gas == nil {
+		msg.gas = big.NewInt(50000000)
+	}
+	if msg.gasPrice == nil {
+		//msg.gasPrice = s.gpo.SuggestPrice()
+		msg.gasPrice = new(big.Int).SetUint64(DefaultGasPrice)
+	}
+
+	// Execute the call and return
+	vmenv := NewEnv(stateDb, bc.config, bc, msg, block.Header())
+	gp := new(GasPool).AddGas(common.MaxBig)
+
+	res, requiredGas, failed, err := NewStateTransition(vmenv, msg, gp).TransitionDb()
+	if len(res) == 0 { // backwards compatibility
+		//return "0x", requiredGas, err
+		return nil, nil, false, err
+	}
+	//return common.ToHex(res), requiredGas, err
+	return res, requiredGas, failed, err
+}
+
+func byteString(p []byte) string {
+	return *(*string)(unsafe.Pointer(&p))
+}
+
+func (bc *BlockChain) GetTokenName(blockNr int64, tokenAddr string) (string, error) {
+	paramStr := fmt.Sprintf(TransferParamFormatTokenName, tokenAddr)
+	args := new(CallArgs)
+	err := json.Unmarshal([]byte(paramStr), args)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Parse token name failed", "token", tokenAddr)
+		//log.Error("Parse token name failed", "token", tokenAddr)
+	}
+	res, _, _, err := bc.doCall(*args, blockNr)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Call token name failed", "token", tokenAddr)
+		//log.Error("Call token name failed", "token", tokenAddr)
+	}
+	temp := ""
+	if len(res) > 64 {
+		temp = byteString(res[64:])
+	} else {
+		temp = byteString(res)
+	}
+	return temp, nil
+}
+
+func (bc *BlockChain) GetTokenSymbol(blockNr int64, tokenAddr string) (string, error) {
+	paramStr := fmt.Sprintf(TransferParamFormatTokenSymbol, tokenAddr)
+	args := new(CallArgs)
+	err := json.Unmarshal([]byte(paramStr), args)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Parse token symbol failed", "token", tokenAddr)
+		//log.Error("Parse token symbol failed", "token", tokenAddr)
+
+	}
+	res, _, _, err := bc.doCall(*args, blockNr)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Call token symbol failed", "token", tokenAddr)
+		//log.Error("Call token symbol failed", "token", tokenAddr)
+	}
+	result := ""
+	if len(res) > 64 {
+		result = byteString(res[64:])
+	} else {
+		result = byteString(res)
+	}
+
+	return result, nil
+}
+
+func (bc *BlockChain) GetTokenDecimalLength(blockNr int64, tokenAddr string) (int64, error) {
+	paramStr := fmt.Sprintf(TransferParamFormatTokenDecimalLength, tokenAddr)
+	args := new(CallArgs)
+	err := json.Unmarshal([]byte(paramStr), args)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Parse token decimal failed", "token", tokenAddr)
+		//log.Error("Parse token decimal length failed", "token", tokenAddr)
+	}
+	res, _, _, err := bc.doCall(*args, blockNr)
+	if err != nil {
+		//log.Error("Call token decimal length failed", "token", tokenAddr)
+		glog.V(logger.Error).Infoln("Call token decimal failed", "token", tokenAddr)
+	}
+	temp := big.NewInt(0)
+	temp.SetBytes(res)
+
+	var decimals int64
+	decimals = temp.Int64()
+
+	return decimals, nil
+}
+
+func (bc *BlockChain) GetTokenTotalSupply(blockNr int64, tokenAddr string) (string, error) {
+	paramStr := fmt.Sprintf(TransferParamFormatTokenTotalSupply, tokenAddr)
+	args := new(CallArgs)
+	err := json.Unmarshal([]byte(paramStr), args)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Parse token total supply failed", "token", tokenAddr)
+		//log.Error("Parse token total supply failed", "token", tokenAddr)
+	}
+	res, _, _, err := bc.doCall(*args, blockNr)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Call token total supply failed", "token", tokenAddr)
+		//log.Error("Call token total supply failed", "token", tokenAddr)
+	}
+
+	var totalSupply *big.Int
+	totalSupply = big.NewInt(0)
+	if len(res) > 2 {
+		totalSupply.SetBytes(res)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		totalSupply = new(big.Int).SetInt64(0)
+	}
+	return totalSupply.String(), nil
+}
+
+func (bc *BlockChain) GetTokenOwner(blockNr int64, tokenAddr string) (string, error) {
+	paramStr := fmt.Sprintf(TransferParamFormatTokenOwner, tokenAddr)
+	args := new(CallArgs)
+	err := json.Unmarshal([]byte(paramStr), args)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Parse token owner failed", "token", tokenAddr)
+		//log.Error("Parse token owner failed", "token", tokenAddr)
+	}
+	res, _, _, err := bc.doCall(*args, blockNr)
+	if err != nil {
+		glog.V(logger.Error).Infoln("Call token owner failed", "token", tokenAddr)
+		//log.Error("Call token owner failed", "token", tokenAddr)
+	}
+	result := string(res)
+	var owner string
+	if len(result) > 26 {
+		owner = result[26:]
+	}
+	if len(result) > 66 {
+		owner = ""
+	} else {
+		owner = ""
+	}
+	return owner, nil
+}
+func (bc *BlockChain) GetTokenInfo(blockNr int64, tokenAddress string) (*httputils.Token, error) {
+	t := new(httputils.Token)
+	name, err := bc.GetTokenName(blockNr, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	symbol, err := bc.GetTokenSymbol(blockNr, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	decimalLength, err := bc.GetTokenDecimalLength(blockNr, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	totalSupply, err := bc.GetTokenTotalSupply(blockNr, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := bc.GetTokenOwner(blockNr, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	t.Name = strings.Replace(name, "\u0000", "", -1)
+	t.DecimalLength = decimalLength
+	t.Symbol = strings.Replace(symbol, "\u0000", "", -1)
+	t.TokenAddress = tokenAddress
+	t.TotalSupply = totalSupply
+	t.Owner = owner
+	return t, nil
+}
+func (bc *BlockChain) sendDataToKafka(bk *httputils.BlockKafka) error {
+	cd := new(httputils.ConfluentData)
+	values := new(httputils.ConfluentValue)
+	values.Value = bk
+	cd.Records = append(cd.Records, values)
+	data, err := json.Marshal(cd)
+	if err != nil {
+		log.Println("json marshal data fail %v", err)
+		return err
+	}
+
+	client := httputils.NewRestClientWithAuthentication(nil)
+	client.SetHeader(httputils.HeaderContentType, httputils.ContentTypeKafka)
+	resp, err := client.Post(KafkaEndpoint, data)
+	if err != nil {
+		log.Println("post data error %v", err)
+		fmt.Println(string(resp))
+		return err
+	}
+
+	return nil
+}
 
 // reorgs takes two blocks, an old chain and a new chain and will reconstruct the blocks and inserts them
 // to be part of the new canonical chain and accumulates potential missing transactions and post an
@@ -1791,7 +2368,13 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 			// Coalesce logs
 			receipts := GetBlockReceipts(bc.chainDb, h)
 			for _, receipt := range receipts {
-				deletedLogs = append(deletedLogs, receipt.Logs...)
+				for _, log := range receipt.Logs {
+					del := *log
+					//del.Removed = true
+					deletedLogs = append(deletedLogs, &del)
+				}
+
+				//deletedLogs = append(deletedLogs, receipt.Logs...)
 
 				deletedLogsByHash[h] = receipt.Logs
 			}

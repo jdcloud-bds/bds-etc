@@ -44,6 +44,9 @@ import (
 	"github.com/eth-classic/go-ethereum/p2p/discover"
 )
 
+// kafka endpoint.
+var KafkaEndpoint string
+
 var (
 	ErrChainConfigNotFound     = errors.New("chain config not found")
 	ErrChainConfigForkNotFound = errors.New("chain config fork not found")

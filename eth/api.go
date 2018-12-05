@@ -70,6 +70,13 @@ func blockByNumber(m *miner.Miner, bc *core.BlockChain, blockNr rpc.BlockNumber)
 	}
 	return bc.GetBlockByNumber(uint64(blockNr))
 }
+func (s *PublicBlockChainAPI) SendBlockToKafka(blk *types.Block, rcps types.Receipts) error {
+	err := s.bc.NewWriteDataToKafka(blk, rcps)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 // stateAndBlockByNumber is a commonly used helper function which retrieves and
 // returns the state and containing block for the given block number, capable of
@@ -629,6 +636,111 @@ func (s *PublicBlockChainAPI) GetBlockByNumber(blockNr rpc.BlockNumber, fullTx b
 		return response, err
 	}
 	return nil, nil
+}
+
+//add
+func (s *PublicBlockChainAPI) SendBlockByNumber(blockNr rpc.BlockNumber, fullTx bool) (string, error) {
+	glog.V(logger.Debug).Infof("Get block", "Number", blockNr)
+	block := blockByNumber(s.miner, s.bc, blockNr)
+	//block, err := s.b.BlockByNumber(ctx, blockNr)
+
+	if block == nil {
+		e := fmt.Sprintf("Empty block %d.", blockNr)
+		return e, nil
+	}
+	//rcps, err := s.b.GetReceipts(ctx, block.Hash())
+	rcps := core.GetBlockReceipts(s.chainDb, block.Hash())
+
+	err := s.SendBlockToKafka(block, rcps)
+	if err != nil {
+		e := fmt.Sprintf("Send block %d to kafka error: %s", blockNr, err.Error())
+		return e, err
+	}
+
+	e := fmt.Sprintf("Send block %d to kafka success!", blockNr)
+	return e, nil
+}
+func (s *PublicBlockChainAPI) SendBlockByHash(ctx context.Context, blockHash common.Hash, fullTx bool) (string, error) {
+	glog.V(logger.Debug).Infof("Get block", "Hash", blockHash)
+	block := s.bc.GetBlock(blockHash)
+	//block, err := s.b.GetBlock(ctx, blockHash)
+
+	if block == nil {
+		e := fmt.Sprintf("Empty block %s.", blockHash.String())
+		return e, nil
+	}
+	fmt.Println("before GetBlockReceipts >> ",block.Hash().String())
+	rcps := core.GetBlockReceipts(s.chainDb, block.Hash())
+
+	err := s.SendBlockToKafka(block, rcps)
+	if err != nil {
+		e := fmt.Sprintf("Send block %s to kafka error: %s", blockHash.String(), err.Error())
+		return e, err
+	}
+
+	e := fmt.Sprintf("Send block %s to kafka success!", blockHash.String())
+	return e, nil
+}
+func (s *PublicBlockChainAPI) SendBatchBlockByNumber(blockStart rpc.BlockNumber, blockEnd rpc.BlockNumber) (map[string]string, error) {
+	info := make(map[string]string)
+	//notifier, supported := rpc.NotifierFromContext(ctx)
+	//if !supported {
+	//	info["Unsupported"] = rpc.ErrNotificationsUnsupported.Error()
+	//	return info, nil
+	//}
+	if blockEnd < blockStart {
+		info["Error"] = "Start block number should not be bigger than end block number."
+		return info, nil
+	}
+	currentNumber := rpc.BlockNumber(s.bc.CurrentBlock().Header().Number.Int64())
+	if blockEnd > currentNumber {
+		glog.V(logger.Debug).Infof("End block number is bigger than the current number, so reset the end block number.")
+		blockEnd = currentNumber
+	}
+	if blockEnd-1000 >= blockStart {
+		info["Error"] = "The blocks' amount is bigger than maximum trace limit(1000)."
+		return info, nil
+	}
+	for blockNr := blockStart; blockNr <= blockEnd; blockNr++ {
+		// Stop sending if interruption was requested
+		//select {
+		//case <-notifier.Closed():
+		//	info["Closed"] = "Stop sending blocks because interruption was requested."
+		//	return info, nil
+		//default:
+		//}
+		glog.V(logger.Debug).Infof("Get block", "Number", blockNr)
+		//block, err := s.b.BlockByNumber(ctx, blockNr)
+		block := blockByNumber(s.miner, s.bc, blockNr)
+		//if err != nil {
+		//	//response, err := s.rpcOutputBlock(block, true, fullTx)
+		//	e := fmt.Sprintf("Get block %d info error: %s", blockNr, err.Error())
+		//	info[fmt.Sprintf("%d", blockNr)] = e
+		//	continue
+		//}
+		if block == nil {
+			e := fmt.Sprintf("Empty block %d.", blockNr)
+			info[fmt.Sprintf("%d", blockNr)] = e
+			continue
+		}
+		//rcps, err := s.b.GetReceipts(ctx, block.Hash())
+		rcps := core.GetBlockReceipts(s.chainDb, block.Hash())
+		//if err != nil {
+		//	e := fmt.Sprintf("Get block %d receipts error: %s", blockNr, err.Error())
+		//	info[fmt.Sprintf("%d", blockNr)] = e
+		//	continue
+		//}
+		err := s.SendBlockToKafka(block, rcps)
+		if err != nil {
+			e := fmt.Sprintf("Send block %d to kafka error: %s", blockNr, err.Error())
+			info[fmt.Sprintf("%d", blockNr)] = e
+			continue
+		}
+	}
+	if len(info) == 0 {
+		info["ALL"] = fmt.Sprintf("Send block %d-%d to kafka success!", blockStart, blockEnd)
+	}
+	return info, nil
 }
 
 // GetBlockByHash returns the requested block. When fullTx is true all transactions in the block are returned in full

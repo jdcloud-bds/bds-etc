@@ -57,6 +57,12 @@ func (h Hash) Bytes() []byte { return h[:] }
 func (h Hash) Big() *big.Int { return new(big.Int).SetBytes(h[:]) }
 func (h Hash) Hex() string   { return "0x" + Bytes2Hex(h[:]) }
 
+// String implements the stringer interface and is used also by the logger when
+// doing full logging into a file.
+func (h Hash) String() string {
+	return h.Hex()
+}
+
 // UnmarshalJSON parses a hash in its hex from to a hash.
 func (h *Hash) UnmarshalJSON(input []byte) error {
 	length := len(input)
@@ -168,6 +174,11 @@ func (a Address) Bytes() []byte { return a[:] }
 func (a Address) Big() *big.Int { return new(big.Int).SetBytes(a[:]) }
 func (a Address) Hash() Hash    { return BytesToHash(a[:]) }
 func (a Address) Hex() string   { return "0x" + Bytes2Hex(a[:]) }
+
+// String implements fmt.Stringer.
+func (a Address) String() string {
+	return a.Hex()
+}
 
 // Sets the address to the value of b. If b is larger than len(a) it will panic
 func (a *Address) SetBytes(b []byte) {

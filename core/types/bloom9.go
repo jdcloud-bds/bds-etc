@@ -42,7 +42,10 @@ func (b *Bloom) SetBytes(d []byte) {
 
 	copy(b[bloomLength-len(d):], d)
 }
-
+// Big converts b to a big integer.
+func (b Bloom) Big() *big.Int {
+	return new(big.Int).SetBytes(b[:])
+}
 func (b *Bloom) Add(d *big.Int) {
 	bin := new(big.Int).SetBytes(b[:])
 	bin.Or(bin, bloom9(d.Bytes()))

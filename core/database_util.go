@@ -192,6 +192,7 @@ func GetBlockReceipts(db ethdb.Database, hash common.Hash) types.Receipts {
 	}
 	storageReceipts := []*types.ReceiptForStorage{}
 	if err := rlp.DecodeBytes(data, &storageReceipts); err != nil {
+		fmt.Println("invalid receipt array RLP for hash: ", hash, err)
 		glog.V(logger.Error).Infof("invalid receipt array RLP for hash %x: %v", hash, err)
 		return nil
 	}
