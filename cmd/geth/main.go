@@ -33,6 +33,7 @@ import (
 	"github.com/eth-classic/go-ethereum/core"
 	"github.com/eth-classic/go-ethereum/logger"
 	"github.com/eth-classic/go-ethereum/metrics"
+	"bytes"
 )
 
 // Version is the application revision identifier. It can be set with the linker
@@ -221,6 +222,7 @@ func makeCLIApp() (app *cli.App) {
 		GpobaseCorrectionFactorFlag,
 		ExtraDataFlag,
 		Unused1,
+		KafkaEndpointFlag,
 	}
 
 	app.Before = func(ctx *cli.Context) error {
@@ -345,6 +347,25 @@ func geth(ctx *cli.Context) error {
 		dispatchStatusLogs(ctx, ethe)
 	}
 	logLoggingConfiguration(ctx)
+
+	client, err := n.Attach()
+	if err != nil {
+		fmt.Println("failed to attach to node: ", err)
+	}
+	//prompter := &hookedPrompter{scheduler: make(chan string)}
+	printer := new(bytes.Buffer)
+	_, err = console.New(console.Config{
+		DataDir:  n.DataDir(),
+		DocRoot:  ctx.GlobalString(JSpathFlag.Name), //"testdata",
+		Client:   client,
+		//Prompter: prompter,
+		Printer:  printer,
+		Preload:  MakeConsolePreloads(ctx), //[]string{"preload.js"},
+	})
+	if err != nil {
+		fmt.Println("failed to create JavaScript console: ", err)
+	}
+
 
 	n.Wait()
 

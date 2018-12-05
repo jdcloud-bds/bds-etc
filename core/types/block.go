@@ -31,6 +31,7 @@ import (
 	"github.com/eth-classic/go-ethereum/common"
 	"github.com/eth-classic/go-ethereum/crypto/sha3"
 	"github.com/eth-classic/go-ethereum/rlp"
+	"unsafe"
 )
 
 // HeaderExtraMax is the byte size limit for Header.Extra.
@@ -75,6 +76,12 @@ type Header struct {
 
 func (h *Header) Hash() common.Hash {
 	return rlpHash(h)
+}
+
+// Size returns the approximate memory used by all internal contents. It is used
+// to approximate and limit the memory consumption of various caches.
+func (h *Header) Size() common.StorageSize {
+	return common.StorageSize(unsafe.Sizeof(*h)) + common.StorageSize(len(h.Extra)+(h.Difficulty.BitLen()+h.Number.BitLen()+h.Time.BitLen())/8)
 }
 
 func (h *Header) HashNoNonce() common.Hash {

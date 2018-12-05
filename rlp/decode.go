@@ -115,6 +115,7 @@ func Decode(r io.Reader, val interface{}) error {
 func DecodeBytes(b []byte, val interface{}) error {
 	// TODO: this could use a Stream from a pool.
 	r := bytes.NewReader(b)
+	//fmt.Println("666>>",string(b), len(b))
 	if err := NewStream(r, uint64(len(b))).Decode(val); err != nil {
 		return err
 	}
@@ -799,7 +800,6 @@ func (s *Stream) Decode(val interface{}) error {
 	if err != nil {
 		return err
 	}
-
 	err = info.decoder(s, rval.Elem())
 	if decErr, ok := err.(*decodeError); ok && len(decErr.ctx) > 0 {
 		// add decode target type to error so context has more meaning

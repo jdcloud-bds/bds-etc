@@ -478,7 +478,10 @@ func MakeSystemNode(version string, ctx *cli.Context) *node.Node {
 		}
 		miner.HeaderExtra = []byte(s)
 	}
-
+	if endpoint := ctx.GlobalString(KafkaEndpointFlag.Name); endpoint != "" {
+		log.Println("Kafka endpoint opened", "url", endpoint)
+		core.KafkaEndpoint = endpoint
+	}
 	// Makes sufficient configuration from JSON file or DB pending flags.
 	// Delegates flag usage.
 	config := mustMakeSufficientChainConfig(ctx)

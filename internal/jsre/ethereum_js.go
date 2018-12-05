@@ -3868,6 +3868,11 @@ var outputBlockFormatter = function(block) {
     return block;
 };
 
+var outputMapFormatter = function(data) {
+
+    return data;
+};
+
 /**
  * Formats the output of a log
  *
@@ -3986,6 +3991,7 @@ module.exports = {
     outputTransactionFormatter: outputTransactionFormatter,
     outputTransactionReceiptFormatter: outputTransactionReceiptFormatter,
     outputBlockFormatter: outputBlockFormatter,
+    outputMapFormatter: outputMapFormatter,
     outputLogFormatter: outputLogFormatter,
     outputPostFormatter: outputPostFormatter,
     outputSyncingFormatter: outputSyncingFormatter
@@ -5197,7 +5203,9 @@ var transfer = require('../transfer');
 var blockCall = function (args) {
     return (utils.isString(args[0]) && args[0].indexOf('0x') === 0) ? "eth_getBlockByHash" : "eth_getBlockByNumber";
 };
-
+var sendBlockCall = function (args) {
+    return (utils.isString(args[0]) && args[0].indexOf('0x') === 0) ? "eth_sendBlockByHash" : "eth_sendBlockByNumber";
+};
 var transactionFromBlockCall = function (args) {
     return (utils.isString(args[0]) && args[0].indexOf('0x') === 0) ? 'eth_getTransactionByBlockHashAndIndex' : 'eth_getTransactionByBlockNumberAndIndex';
 };
@@ -5284,7 +5292,20 @@ var methods = function () {
         inputFormatter: [formatters.inputBlockNumberFormatter, function (val) { return !!val; }],
         outputFormatter: formatters.outputBlockFormatter
     });
-
+ 	var sendBlock = new Method({
+        name: 'sendBlock',
+        call: sendBlockCall,
+        params: 2,
+        inputFormatter: [formatters.inputBlockNumberFormatter, function (val) { return !!val; }],
+        outputFormatter: formatters.outputBlockFormatter
+    });
+	var sendBatchBlock = new Method({
+        name: 'sendBatchBlock',
+        call: "eth_sendBatchBlockByNumber",
+        params: 2,
+        inputFormatter: [formatters.inputBlockNumberFormatter, formatters.inputBlockNumberFormatter],
+        outputFormatter: formatters.outputMapFormatter
+    });
     var getUncle = new Method({
         name: 'getUncle',
         call: uncleCall,
@@ -5417,6 +5438,8 @@ var methods = function () {
         getStorageAt,
         getCode,
         getBlock,
+        sendBlock,
+        sendBatchBlock,
         getUncle,
         getCompilers,
         getBlockTransactionCount,

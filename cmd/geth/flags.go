@@ -423,6 +423,13 @@ var (
 		Name:  "oppose-dao-fork",
 		Usage: "Use classic blockchain (always set, flag is unused and exists for compatibility only)",
 	}
+
+	// User-Defined settings
+	KafkaEndpointFlag = cli.StringFlag{
+		Name:  "kafka.endpoint",
+		Usage: "Enable kafka",
+		//Value: "http://localhost:8082/topics/eth_test",
+	}
 )
 
 // aliasableName check global vars for aliases flag and directoryFlag names.
