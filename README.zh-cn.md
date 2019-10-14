@@ -10,7 +10,7 @@ bds-etc 是开源项目区块链数据服务（BDS）的其中一个独立模块
 ## 环境部署 
 ### 安装 ETC
 #### 环境初始化
-[build-unix](./doc/build-unix.md)
+[build](./doc/build.md)
 
 #### 运行步骤
 
