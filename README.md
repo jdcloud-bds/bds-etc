@@ -43,7 +43,7 @@ See [kafka](https://kafka.apache.org/quickstart)
 
 #### Install confluent 
 see [confluent](https://docs.confluent.io/current/installation/installing_cp/zip-tar.html#prod-kafka-cli-install)
-
+``
 Unzip the confluent package and run Confluent REST Proxy
 
 ##### Modify  <path-to-confluent>/etc/kafka-rest/kafka-rest.properties 

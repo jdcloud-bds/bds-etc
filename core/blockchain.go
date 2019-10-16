@@ -1793,11 +1793,11 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (res *ChainInsertResult) {
 }
 func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receipt) error {
 	BaseBlockRewards[0].SetUint64(5000000000000000000) //  5 * 10^18
-	BaseBlockRewards[1].SetUint64(3000000000000000000) // 3 * 10^18
+	BaseBlockRewards[1].SetUint64(4000000000000000000) // 4 * 10^18
 	UncleRewards[0][0].SetUint64(156250000000000000)   //  5* (1/32)* 10^18 = 0.15625 * 10^18
 	UncleRewards[0][1].SetUint64(312500000000000000)   //  5* (1/32)*2 10^18  = 0.3125 * 10^18
-	UncleRewards[1][0].SetUint64(93750000000000000)    // 3* (1/32) * 10^18 = 0.09375 * 10^18
-	UncleRewards[1][1].SetUint64(187500000000000000)   // 3* (1/32)*2 * 10^18 = 0.1875 * 10^18
+	UncleRewards[1][0].SetUint64(125000000000000000)    // 4* (1/32) * 10^18 = 0.09375 * 10^18
+	UncleRewards[1][1].SetUint64(250000000000000000)   // 4* (1/32)*2 * 10^18 = 0.1875 * 10^18
 
 	statedb, _ := bc.State()
 
@@ -1871,8 +1871,8 @@ func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receip
 				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 5 / 8 * 10^18
 				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 625000000000000000
 			} else {
-				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 3 / 8* 10^18
-				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 375000000000000000
+				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 4 / 8* 10^18
+				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 500000000000000000
 			}
 			uncles = append(uncles, uncle)
 		}
@@ -1927,7 +1927,7 @@ func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receip
 			tran.ReplayProtected = tx.Protected()
 			bk.Transactions = append(bk.Transactions, tran)
 
-			singleFee.SetInt64(rcps[0].GasUsed.Int64() * blk.Transactions()[0].GasPrice().Int64())
+			singleFee.SetInt64(rcps[i].GasUsed.Int64() * blk.Transactions()[i].GasPrice().Int64())
 			totalFee.Add(totalFee, singleFee)
 
 			logsList := rcps[i].Logs
@@ -2012,7 +2012,7 @@ func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receip
 	}
 	var reward *big.Int
 	var BlockUncleReward uint64
-	if height < 4370000 {
+	if height <= 5000000 {
 		reward = new(big.Int).Add(&BaseBlockRewards[0], totalFee)
 		if len(blk.Uncles()) > 0 {
 			reward = new(big.Int).Add(reward, &UncleRewards[0][len(blk.Uncles())-1])
@@ -2045,6 +2045,7 @@ func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receip
 			log.Println("send data to kafka failed.", "err", err)
 			return err
 		}
+		log.Println("send data to kafka success: height ", bk.Block.Height)
 	}
 
 	return nil
