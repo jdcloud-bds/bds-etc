@@ -2,7 +2,7 @@
 ## 介绍
 bds-etc 是开源项目区块链数据服务（BDS）的其中一个独立模块 - 提供全节点服务。
 
-*bds-etc* 基于 [etclabscore/go-ethereum](https://github.com/etclabscore/go-ethereum) 的 v6.0.8 版本进行二次开发，支持直接将新增的区块数据往消息中间件服务 kafka 发送，方便上游的服务来订阅消费。
+*bds-etc* 基于 [etclabscore/go-ethereum](https://github.com/etclabscore/go-ethereum) 的 v6.0.9 版本进行二次开发，支持直接将新增的区块数据往消息中间件服务 kafka 发送，方便上游的服务来订阅消费。
 
 ## 架构
 ![架构](./doc/bds-architecture.jpg)

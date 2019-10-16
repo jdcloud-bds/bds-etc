@@ -3,7 +3,7 @@
 ## Introduction
 bds-etc is one of the independent modules in open source project of block chain data service (BDS) - provides full node service.
 
-*bds-etc* Based on the v6.0.8 version of [etclabscore/go-ethereum](https://github.com/etclabscore/go-ethereum),*bds-etc* redeveloped to support sending new block data directly to message middleware service of kafka to facilitate upstream services to subscribe and consume.
+*bds-etc* Based on the v6.0.9 version of [etclabscore/go-ethereum](https://github.com/etclabscore/go-ethereum),*bds-etc* redeveloped to support sending new block data directly to message middleware service of kafka to facilitate upstream services to subscribe and consume.
 
 ## Architecture 
 ![Architecture](./doc/bds-architecture.jpg)
