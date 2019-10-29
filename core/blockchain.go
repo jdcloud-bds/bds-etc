@@ -1867,12 +1867,12 @@ func (bc *BlockChain) NewWriteDataToKafka(blk *types.Block, rcps []*types.Receip
 			uncle.Size = int64(unc.Size())
 			uncle.BlockHeight = height
 			//reward
-			if uncle.BlockHeight < 4370000 {
+			if uncle.BlockHeight <=  5000000 {
 				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 5 / 8 * 10^18
 				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 625000000000000000
 			} else {
-				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 4 / 8* 10^18
-				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 500000000000000000
+				//叔块奖励 = ( 叔块高度 + 8 - 包含叔块的区块的高度 ) * 3 / 8* 10^18
+				uncle.Reward = int64(uncle.Height+8-uncle.BlockHeight) * 375000000000000000
 			}
 			uncles = append(uncles, uncle)
 		}
