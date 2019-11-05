@@ -1,5 +1,8 @@
 # bds-etc
 ![logo](./doc/bds-logo.png)
+
+* [简体中文](./README.zh-cn.md)
+
 ## Introduction
 bds-etc is one of the independent modules in open source project of block chain data service (BDS) - provides full node service.
 
